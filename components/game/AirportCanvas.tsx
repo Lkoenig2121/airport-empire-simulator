@@ -90,7 +90,7 @@ export default function AirportCanvas() {
       actors.clear();
       const list = [
         ...passengers.map((p) => ({ z: p.x + p.y, draw: () => drawPassenger(actors, p) })),
-        ...aircraft.map((a) => ({ z: a.x + a.y, draw: () => drawAircraft(actors, a) })),
+        ...aircraft.map((a) => ({ z: a.x + a.y + (a.alt ?? 0) * 3, draw: () => drawAircraft(actors, a) })),
       ].sort((a, b) => a.z - b.z);
       for (const item of list) item.draw();
     };

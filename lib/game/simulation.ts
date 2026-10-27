@@ -249,8 +249,8 @@ function makeAircraft(
   const start = points[0];
   const end = points[points.length - 1];
   const approach = alongX
-    ? { x: start.x - 7, y: start.y }
-    : { x: start.x, y: start.y - 7 };
+    ? { x: start.x - 12, y: start.y }
+    : { x: start.x, y: start.y - 12 };
 
   if (flight.kind === "arrival") {
     return {
@@ -260,6 +260,7 @@ function makeAircraft(
       x: approach.x,
       y: approach.y,
       heading: alongX ? 0 : Math.PI / 2,
+      alt: 11,
       state: "approach",
       path: [start, ...points.slice(1)],
       wait: 0,
@@ -274,10 +275,21 @@ function makeAircraft(
     x: park.x,
     y: park.y,
     heading: 0,
+    alt: 0,
     state: "parked",
     path: [],
     wait: 10,
   };
+}
+
+function climbOut(end: { x: number; y: number }, alongX: boolean) {
+  const points: { x: number; y: number }[] = [];
+  for (let i = 1; i <= 22; i++) {
+    points.push(
+      alongX ? { x: end.x + i * 1.35, y: end.y } : { x: end.x, y: end.y + i * 1.35 },
+    );
+  }
+  return points;
 }
 
 function spawnPassengers(
@@ -469,8 +481,21 @@ export function advanceSimulation(state: GameState, dtSec: number): Partial<Game
       continue;
     }
 
+    if (plane.state === "approach") {
+      const dist = Math.hypot(plane.x - start.x, plane.y - start.y);
+      plane.alt = Math.max(0, Math.min(12, dist * 0.7));
+    } else if (plane.state === "landing" || plane.state === "taxi-in" || plane.state === "taxi-out" || plane.state === "parked") {
+      plane.alt = 0;
+    } else if (plane.state === "takeoff") {
+      const airborne = plane.path.length <= 22;
+      if (airborne) plane.alt = Math.min(16, (plane.alt ?? 0) + 0.7 * dtMin);
+      else plane.alt = Math.max(0, (24 - plane.path.length) * 0.12);
+    }
+
+    const climbing = plane.state === "takeoff" && (plane.alt ?? 0) > 0.5;
     const air = plane.state === "approach" || plane.state === "takeoff";
-    const arrived = moveAlong(plane, air ? 2.6 : 0.95, dtMin);
+    const speed = climbing ? 1.15 : air ? 1.7 : 0.95;
+    const arrived = moveAlong(plane, speed, dtMin);
 
     if (!arrived) continue;
 
@@ -503,11 +528,9 @@ export function advanceSimulation(state: GameState, dtSec: number): Partial<Game
     } else if (plane.state === "taxi-out") {
       plane.state = "takeoff";
       flight.status = "departed";
-      const beyond =
-        runway.w >= runway.h
-          ? { x: end.x + 8, y: end.y }
-          : { x: end.x, y: end.y + 8 };
-      plane.path = [...points, beyond];
+      plane.alt = 0;
+      const alongX = runway.w >= runway.h;
+      plane.path = [...points, ...climbOut(end, alongX)];
       const fare = flight.kind === "departure" ? flight.passengers * 36 : flight.passengers * 18;
       cash += fare;
       stats.revenueToday += fare;

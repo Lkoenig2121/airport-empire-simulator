@@ -321,18 +321,22 @@ export function drawGhost(
 }
 
 export function drawAircraft(g: Graphics, plane: Aircraft) {
-  const p = iso(plane.x + 0.5, plane.y + 0.5);
+  const alt = plane.alt ?? 0;
+  const ground = iso(plane.x + 0.5, plane.y + 0.5);
+  const lift = alt * 20;
+  const scale = Math.max(0.7, 1 - alt * 0.018);
+  const p = { x: ground.x, y: ground.y - lift };
   const tip = iso(
     plane.x + 0.5 + Math.cos(plane.heading),
     plane.y + 0.5 + Math.sin(plane.heading),
   );
-  const angle = Math.atan2(tip.y - p.y, tip.x - p.x);
+  const angle = Math.atan2(tip.y - ground.y, tip.x - ground.x);
   const color = AIRLINE_BY_ID[plane.airlineId]?.color ?? 0x2f6fed;
   const c = Math.cos(angle);
   const s = Math.sin(angle);
   const pt = (dx: number, dy: number) => ({
-    x: p.x + dx * c - dy * s,
-    y: p.y + dx * s + dy * c - 3,
+    x: p.x + (dx * c - dy * s) * scale,
+    y: p.y + (dx * s + dy * c) * scale - 3 * scale,
   });
   const poly = (...pts: { x: number; y: number }[]) => {
     const flat: number[] = [];
@@ -340,7 +344,15 @@ export function drawAircraft(g: Graphics, plane: Aircraft) {
     return flat;
   };
 
-  g.ellipse(p.x + 4, p.y + 5, 16, 5).fill({ color: 0x000000, alpha: 0.16 });
+  const shadowScale = Math.max(0.28, 1 - alt * 0.055);
+  const shadowAlpha = Math.max(0.04, 0.2 - alt * 0.012);
+  g.ellipse(
+    ground.x + 5 + alt * 2.4,
+    ground.y + 6 + alt * 1.1,
+    17 * shadowScale,
+    5.5 * shadowScale,
+  ).fill({ color: 0x000000, alpha: shadowAlpha });
+
   g.poly(poly(pt(18, 0), pt(10, 3.2), pt(-16, 2.4), pt(-16, -2.4), pt(10, -3.2))).fill(0xf4f7fb);
   g.poly(poly(pt(8, 0), pt(-2, 15), pt(-7, 15), pt(-4, 0), pt(-7, -15), pt(-2, -15))).fill(0xe6edf4);
   g.poly(poly(pt(-1, 11), pt(-6, 12.5), pt(-8, 10.5), pt(-3, 9.4))).fill(0xc5ced6);
@@ -351,7 +363,7 @@ export function drawAircraft(g: Graphics, plane: Aircraft) {
   g.poly(poly(pt(18, 0), pt(12, 1.6), pt(12, -1.6))).fill(0xd7dee6);
   for (let i = 0; i < 6; i++) {
     const w = pt(8 - i * 3.2, 0);
-    g.circle(w.x, w.y, 1.05).fill(0x1d2a36);
+    g.circle(w.x, w.y, 1.05 * scale).fill(0x1d2a36);
   }
 }
 

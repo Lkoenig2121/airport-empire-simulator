@@ -108,6 +108,7 @@ export type Aircraft = {
   x: number;
   y: number;
   heading: number;
+  alt: number;
   state: AircraftState;
   path: { x: number; y: number }[];
   wait: number;
