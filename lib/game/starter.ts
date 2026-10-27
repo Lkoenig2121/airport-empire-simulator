@@ -52,7 +52,7 @@ export function starterOpeningService(airportName: string): {
     id: "fl_opening",
     flightNo: "HA 214",
     airlineId: "horizon",
-    origin: "Cedar Falls",
+    origin: "Cedar Falls Metro",
     destination: airportName,
     kind: "arrival",
     status: "inbound",

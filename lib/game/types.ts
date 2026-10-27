@@ -1,3 +1,5 @@
+import type { FlightHistoryEntry, FlightSession } from "../flight/types";
+
 export const MAP_SIZE = 36;
 export const TILE_W = 64;
 export const TILE_H = 32;
@@ -101,6 +103,8 @@ export type AircraftState =
   | "takeoff"
   | "gone";
 
+export type AircraftControl = "ai" | "player";
+
 export type Aircraft = {
   id: string;
   flightId: string;
@@ -112,7 +116,9 @@ export type Aircraft = {
   state: AircraftState;
   path: { x: number; y: number }[];
   wait: number;
-};
+  controlledBy?: AircraftControl;
+  airportId?: string;
+}
 
 export type Passenger = {
   id: string;
@@ -172,4 +178,10 @@ export type GameState = {
   panel: PanelId;
   hoverCell: { x: number; y: number } | null;
   rotate: boolean;
+  flight: FlightSession | null;
+  flightOverlay: boolean;
+  flightHistory: FlightHistoryEntry[];
+  currentAirportId: string;
+  hubAircraft: Aircraft[];
+  hubPassengers: Passenger[];
 };

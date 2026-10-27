@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { getAdvice, getMilestones } from "@/lib/game/advisor";
+import { DESTINATION_BY_ID } from "@/lib/flight/destinations";
+import { isHomeAirport } from "@/lib/game/hubs";
 import { useGame } from "@/lib/game/store";
 
 const WHY: Record<string, string> = {
@@ -19,9 +21,14 @@ export function AdvisorPanel() {
   const stats = useGame((s) => s.stats);
   const setTool = useGame((s) => s.setTool);
   const setPanel = useGame((s) => s.setPanel);
+  const currentAirportId = useGame((s) => s.currentAirportId);
   const [open, setOpen] = useState(true);
+  const visiting = !isHomeAirport(currentAirportId);
+  const hub = DESTINATION_BY_ID[currentAirportId];
 
-  const advice = getAdvice({ buildings, staff, cash, unlockedAirlines, stats });
+  const advice = visiting
+    ? []
+    : getAdvice({ buildings, staff, cash, unlockedAirlines, stats });
   const milestones = getMilestones({ buildings, unlockedAirlines, stats });
   const next = milestones.find((m) => !m.done);
 
@@ -33,7 +40,11 @@ export function AdvisorPanel() {
             Operations notes
           </div>
           <div className="text-sm font-semibold text-white">
-            {next ? `Next: ${next.label}` : "The airfield is growing well"}
+            {visiting
+              ? `Visiting ${hub?.name ?? "a hub"}`
+              : next
+                ? `Next: ${next.label}`
+                : "The airfield is growing well"}
           </div>
         </div>
         <button
@@ -46,6 +57,11 @@ export function AdvisorPanel() {
       </div>
       {open ? (
         <div className="space-y-3 border-t border-white/10 px-4 py-3">
+          {visiting ? (
+            <p className="text-[12px] leading-relaxed text-white/65">
+              {hub?.name} is a locked, fully built airport. You cannot edit it. Use Prev/Next or the map to fly the 60-second network, then return to Skyport to keep constructing your own field.
+            </p>
+          ) : null}
           <div className="flex flex-wrap gap-1.5">
             {milestones.map((item) => (
               <span

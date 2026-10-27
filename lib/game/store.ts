@@ -2,6 +2,19 @@
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { DESTINATION_BY_ID, DESTINATIONS, destinationByName, nextAirportId } from "@/lib/flight/destinations";
+import {
+  advanceFlight,
+  canSelectDestination,
+  changeDestination,
+  createSession,
+  historyEntry,
+  startFlight,
+} from "@/lib/flight/engine";
+import { readFlightInput } from "@/lib/flight/input";
+import { FLIGHT_PAYOUT, HOME_AIRPORT_ID, type FlightView } from "@/lib/flight/types";
+import { advanceHubTraffic, isHomeAirport, parkOnAirport, seedHubTraffic } from "./hubs";
+import { worldAircraft, worldBuildings } from "./world";
 import { BUILD_BY_ID } from "./catalog";
 import { cellsOf, uid } from "./iso";
 import {
@@ -13,6 +26,7 @@ import {
   isOperational,
   occupiedMap,
   placementCost,
+  returnPlayerAircraft,
 } from "./simulation";
 import { resolveInspect } from "./inspect";
 import { starterSlice } from "./starter";
@@ -37,6 +51,19 @@ type GameActions = {
   newGame: () => void;
   inspectAt: (x: number, y: number) => void;
   clearInspect: () => void;
+  enterCockpit: (aircraftId: string) => void;
+  exitToAirport: () => void;
+  resumeCockpit: () => void;
+  startPlayerFlight: () => { ok: true } | { ok: false; reason: string };
+  setFlightDestination: (id: string) => { ok: true } | { ok: false; reason: string };
+  setFlightView: (view: FlightView) => void;
+  setFlightSearch: (search: string) => void;
+  toggleFlightPause: () => void;
+  tickFlight: (dtSec: number) => void;
+  continueFlight: () => void;
+  abandonFlight: () => void;
+  flyToAirport: (destinationId: string) => { ok: true } | { ok: false; reason: string };
+  cycleAirport: (dir: 1 | -1) => void;
 };
 
 let uiFlush = 0;
@@ -57,6 +84,12 @@ const fresh = (): GameState => {
     panel: "build",
     hoverCell: null,
     rotate: false,
+    flight: null,
+    flightOverlay: false,
+    flightHistory: [],
+    currentAirportId: HOME_AIRPORT_ID,
+    hubAircraft: [],
+    hubPassengers: [],
   };
 };
 
@@ -66,12 +99,20 @@ export const useGame = create<GameState & GameActions>()(
       ...fresh(),
 
       tick: (dtSec) => {
-        const patch = advanceSimulation(get(), dtSec);
+        const state = get();
+        const patch = advanceSimulation(state, dtSec);
+        if (!isHomeAirport(state.currentAirportId) && state.speed !== 0) {
+          const hub = advanceHubTraffic(state.currentAirportId, state.hubAircraft, state.hubPassengers, dtSec * Math.max(1, state.speed));
+          patch.hubAircraft = hub.aircraft;
+          patch.hubPassengers = hub.passengers;
+        }
         if (!Object.keys(patch).length) return;
         const current = get();
         if (patch.aircraft) current.aircraft = patch.aircraft;
         if (patch.passengers) current.passengers = patch.passengers;
         if (patch.minutes !== undefined) current.minutes = patch.minutes;
+        if (patch.hubAircraft) current.hubAircraft = patch.hubAircraft;
+        if (patch.hubPassengers) current.hubPassengers = patch.hubPassengers;
         uiFlush += dtSec;
         const important = Boolean(patch.notices || patch.unlockedAirlines || patch.ledger);
         if (important || uiFlush >= 0.2) {
@@ -87,10 +128,14 @@ export const useGame = create<GameState & GameActions>()(
           selectedTool: panel === "build" ? get().selectedTool : null,
           inspect: panel === "build" ? get().inspect : null,
         }),
-      setTool: (tool) => set({ selectedTool: tool, panel: "build", inspect: null }),
+      setTool: (tool) => {
+        if (!isHomeAirport(get().currentAirportId)) return;
+        set({ selectedTool: tool, panel: "build", inspect: null });
+      },
       inspectAt: (x, y) => {
-        const { buildings, aircraft, panel } = get();
-        const inspect = resolveInspect(x, y, buildings, aircraft);
+        const state = get();
+        const inspect = resolveInspect(x, y, worldBuildings(state), worldAircraft(state));
+        const panel = state.panel;
         const closeRight = panel === "flights" || panel === "staff" || panel === "finance" || panel === "analytics";
         set({
           inspect,
@@ -104,6 +149,7 @@ export const useGame = create<GameState & GameActions>()(
 
       place: (x, y) => {
         const { selectedTool, buildings, cash, rotate, notices } = get();
+        if (!isHomeAirport(get().currentAirportId)) return false;
         if (!selectedTool || selectedTool === "demolish") return false;
         if (!canPlace(buildings, selectedTool, x, y, rotate)) return false;
         const { w, h } = footprint(selectedTool, rotate);
@@ -113,7 +159,7 @@ export const useGame = create<GameState & GameActions>()(
             notices: [
               {
                 id: uid("note"),
-                kind: "warn",
+                kind: "warn" as const,
                 title: "Insufficient funds",
                 body: `${BUILD_BY_ID[selectedTool].name} costs $${cost.toLocaleString()}.`,
                 at: Date.now(),
@@ -201,11 +247,13 @@ export const useGame = create<GameState & GameActions>()(
       },
 
       demolish: (x, y) => {
+        if (!isHomeAirport(get().currentAirportId)) return;
         const hit = occupiedMap(get().buildings).get(`${x},${y}`);
         if (hit) get().sellBuilding(hit.id);
       },
 
       sellBuilding: (id) => {
+        if (!isHomeAirport(get().currentAirportId)) return;
         const hit = get().buildings.find((b) => b.id === id);
         if (!hit) return;
         const refund = Math.round(placementCost(hit.type, hit.w, hit.h) * 0.4);
@@ -225,7 +273,7 @@ export const useGame = create<GameState & GameActions>()(
           notices: [
             {
               id: uid("note"),
-              kind: "money",
+              kind: "money" as const,
               title: `Sold ${BUILD_BY_ID[hit.type].name}`,
               body: `Refunded $${refund.toLocaleString()} (40%).`,
               at: Date.now(),
@@ -242,7 +290,7 @@ export const useGame = create<GameState & GameActions>()(
           notices: [
             {
               id: uid("note"),
-              kind: "info",
+              kind: "info" as const,
               title: "New hire",
               body: `${person.name} joined as ${role}.`,
               at: Date.now(),
@@ -259,17 +307,345 @@ export const useGame = create<GameState & GameActions>()(
         set({ notices: get().notices.filter((n) => n.id !== id) }),
       rename: (airportName) => set({ airportName }),
       newGame: () => set({ ...fresh(), welcome: false, panel: "build", selectedTool: null }),
+
+      enterCockpit: (aircraftId) => {
+        const { aircraft, flights, flight, currentAirportId } = get();
+        if (flight?.started && flight.phase !== "completed") {
+          set({ flightOverlay: true, inspect: null, selectedTool: null });
+          return;
+        }
+        const plane = worldAircraft(get()).find((a) => a.id === aircraftId) ?? aircraft.find((a) => a.id === aircraftId);
+        if (!plane) return;
+        const scheduled = flights.find((f) => f.id === plane.flightId);
+        const named = scheduled
+          ? destinationByName(scheduled.kind === "departure" ? scheduled.destination : scheduled.origin)
+          : null;
+        const originId = currentAirportId || HOME_AIRPORT_ID;
+        const destGuess =
+          named && named.id !== originId
+            ? named.id
+            : nextAirportId(originId, 1);
+        const destinationId = destGuess === originId ? nextAirportId(originId, 1) : destGuess;
+        set({
+          flight: createSession({
+            aircraftId: plane.id,
+            flightNo: scheduled?.flightNo ?? "PF 1",
+            airlineId: plane.airlineId,
+            originId,
+            destinationId,
+          }),
+          flightOverlay: true,
+          inspect: null,
+          selectedTool: null,
+          aircraft: aircraft.some((a) => a.id === plane.id)
+            ? aircraft.map((a) =>
+                a.id === plane.id
+                  ? { ...a, controlledBy: "player" as const, airportId: originId }
+                  : a.controlledBy === "player"
+                    ? { ...a, controlledBy: undefined }
+                    : a,
+              )
+            : [
+                ...aircraft.map((a) => (a.controlledBy === "player" ? { ...a, controlledBy: undefined } : a)),
+                { ...plane, controlledBy: "player" as const, airportId: originId },
+              ],
+        });
+      },
+
+      exitToAirport: () => {
+        const { flight, aircraft, flightHistory } = get();
+        if (!flight) {
+          set({ flightOverlay: false });
+          return;
+        }
+        const dest = DESTINATION_BY_ID[flight.destinationId];
+        const finishedAway = flight.phase === "completed" && dest?.id !== HOME_AIRPORT_ID;
+        const logged = flightHistory.some((h) => h.id === flight.id);
+        set({
+          flightOverlay: false,
+          flight: flight.started && flight.phase !== "completed" ? { ...flight, paused: true, view: "cockpit" } : null,
+          aircraft: aircraft.map((a) => {
+            if (a.id !== flight.aircraftId) return a;
+            if (finishedAway) return { ...a, state: "gone" as const, controlledBy: undefined, path: [] };
+            if (!flight.started) return { ...a, controlledBy: undefined };
+            return a;
+          }),
+          flightHistory: logged || flight.phase !== "completed" ? flightHistory : [historyEntry(flight, "completed"), ...flightHistory].slice(0, 40),
+        });
+      },
+
+      resumeCockpit: () => {
+        if (!get().flight) return;
+        set({ flightOverlay: true, inspect: null, selectedTool: null, panel: "none" });
+      },
+
+      startPlayerFlight: () => {
+        const flight = get().flight;
+        if (!flight) return { ok: false, reason: "No aircraft is in the cockpit." };
+        const check = canSelectDestination(flight.originId, flight.destinationId);
+        if (!check.ok) return check;
+        const next = startFlight(flight);
+        if (!next.started) return { ok: false, reason: "Choose a valid destination before departing." };
+        set({
+          flight: { ...next, view: "cockpit" },
+          flights: get().flights.map((f) =>
+            f.aircraftId === next.aircraftId ? { ...f, status: "departed" as const } : f,
+          ),
+        });
+        return { ok: true };
+      },
+
+      setFlightDestination: (id) => {
+        const flight = get().flight;
+        if (!flight) return { ok: false, reason: "No active flight." };
+        const check = flight.started
+          ? DESTINATION_BY_ID[id]
+            ? { ok: true as const }
+            : { ok: false, reason: "Unknown destination." }
+          : canSelectDestination(flight.originId, id);
+        if (!check.ok) return check;
+        set({ flight: changeDestination(flight, id) });
+        return { ok: true };
+      },
+
+      setFlightView: (view) => {
+        const flight = get().flight;
+        if (!flight) return;
+        set({ flight: { ...flight, view } });
+      },
+
+      setFlightSearch: (search) => {
+        const flight = get().flight;
+        if (!flight) return;
+        set({ flight: { ...flight, search } });
+      },
+
+      toggleFlightPause: () => {
+        const flight = get().flight;
+        if (!flight?.started || flight.phase === "completed") return;
+        set({ flight: { ...flight, paused: !flight.paused } });
+      },
+
+      tickFlight: (dtSec) => {
+        const { flight, flightHistory } = get();
+        if (!flight || flight.phase === "completed") return;
+        const next = advanceFlight(flight, dtSec, readFlightInput());
+        if (next === flight) return;
+        if (next.phase === "completed" && !flightHistory.some((h) => h.id === next.id)) {
+          const dest = DESTINATION_BY_ID[next.destinationId];
+          const home = dest?.id === HOME_AIRPORT_ID;
+          const originName = DESTINATION_BY_ID[next.originId]?.name ?? "Origin";
+          const destId = dest?.id ?? HOME_AIRPORT_ID;
+          const destBuildings = home ? get().buildings : worldBuildings({ currentAirportId: destId, buildings: get().buildings });
+          const traffic = home ? { aircraft: [], passengers: [] } : seedHubTraffic(destId);
+          const payout = next.originId === HOME_AIRPORT_ID ? FLIGHT_PAYOUT : 0;
+          const stats = get().stats;
+          set({
+            flight: next,
+            cash: get().cash + payout,
+            stats: payout ? { ...stats, revenueToday: stats.revenueToday + payout } : stats,
+            selectedTool: null,
+            currentAirportId: destId,
+            hubAircraft: home ? [] : traffic.aircraft,
+            hubPassengers: home ? [] : traffic.passengers,
+            flightHistory: [historyEntry(next, "completed"), ...flightHistory].slice(0, 40),
+            aircraft: (() => {
+              const list = get().aircraft;
+              const locate = (a: (typeof list)[number]) =>
+                home
+                  ? { ...returnPlayerAircraft(a, destBuildings, true), airportId: HOME_AIRPORT_ID }
+                  : { ...parkOnAirport(a, destBuildings), airportId: destId, controlledBy: undefined };
+              if (list.some((a) => a.id === next.aircraftId)) {
+                return list.map((a) => (a.id === next.aircraftId ? locate(a) : a));
+              }
+              return [
+                ...list,
+                locate({
+                  id: next.aircraftId,
+                  flightId: next.id,
+                  airlineId: next.airlineId,
+                  x: 10,
+                  y: 10,
+                  heading: 0,
+                  alt: 0,
+                  state: "parked",
+                  path: [],
+                  wait: 0,
+                }),
+              ];
+            })(),
+            flights: get().flights.map((f) => {
+              if (f.aircraftId !== next.aircraftId) return f;
+              return home
+                ? {
+                    ...f,
+                    kind: "arrival" as const,
+                    status: "inbound" as const,
+                    origin: originName,
+                    destination: get().airportName,
+                  }
+                : { ...f, status: "departed" as const };
+            }),
+            notices: [
+              {
+                id: uid("note"),
+                kind: "success" as const,
+                title: `${next.flightNo} arrived`,
+                body: `Landed at ${dest?.name ?? "destination"} after ${Math.round(next.elapsed)}s.${payout ? ` Earned $${payout.toLocaleString()}.` : ""} ${home ? "Welcome home." : "This hub is read-only."}`,
+                at: Date.now(),
+              },
+              ...get().notices,
+            ].slice(0, 5),
+          });
+          return;
+        }
+        set({ flight: next });
+      },
+
+      continueFlight: () => {
+        const prev = get().flight;
+        if (!prev || prev.phase !== "completed") return;
+        const originId = prev.destinationId;
+        const destinationId = nextAirportId(originId, 1);
+        set({
+          flight: createSession({
+            aircraftId: prev.aircraftId,
+            flightNo: prev.flightNo,
+            airlineId: prev.airlineId,
+            originId,
+            destinationId,
+          }),
+          flightOverlay: true,
+          aircraft: get().aircraft.map((a) =>
+            a.id === prev.aircraftId ? { ...a, controlledBy: "player" as const, state: a.state === "gone" ? "parked" : a.state } : a,
+          ),
+        });
+      },
+
+      flyToAirport: (destinationId) => {
+        const { currentAirportId, flight, aircraft } = get();
+        if (!DESTINATION_BY_ID[destinationId]) return { ok: false, reason: "Unknown airport." };
+        if (flight?.started && flight.phase !== "completed") {
+          return get().setFlightDestination(destinationId);
+        }
+        if (destinationId === currentAirportId) {
+          return { ok: false, reason: "You are already at this airport." };
+        }
+        const check = canSelectDestination(currentAirportId, destinationId);
+        if (!check.ok) return check;
+        let plane = aircraft.find((a) => a.controlledBy === "player") ?? aircraft.find((a) => (a.airportId ?? HOME_AIRPORT_ID) === currentAirportId);
+        if (!plane) {
+          plane = {
+            id: uid("ac"),
+            flightId: uid("fl"),
+            airlineId: "horizon",
+            x: 16,
+            y: 15,
+            heading: 0,
+            alt: 0,
+            state: "parked",
+            path: [],
+            wait: 0,
+            airportId: currentAirportId,
+          };
+        }
+        const session = startFlight(
+          createSession({
+            aircraftId: plane.id,
+            flightNo: "PF 1",
+            airlineId: plane.airlineId,
+            originId: currentAirportId,
+            destinationId,
+          }),
+        );
+        if (!session.started) return { ok: false, reason: "Could not start that flight." };
+        set({
+          flight: { ...session, view: "cockpit" },
+          flightOverlay: true,
+          inspect: null,
+          selectedTool: null,
+          aircraft: aircraft.some((a) => a.id === plane.id)
+            ? aircraft.map((a) => (a.id === plane.id ? { ...a, controlledBy: "player" as const } : a))
+            : [...aircraft, { ...plane, controlledBy: "player" as const }],
+        });
+        return { ok: true };
+      },
+
+      cycleAirport: (dir) => {
+        const next = nextAirportId(get().currentAirportId, dir);
+        get().flyToAirport(next);
+      },
+
+      abandonFlight: () => {
+        const { flight, aircraft } = get();
+        if (!flight) {
+          set({ flightOverlay: false });
+          return;
+        }
+        set({
+          flight: null,
+          flightOverlay: false,
+          aircraft: aircraft.map((a) =>
+            a.id === flight.aircraftId
+              ? {
+                  ...a,
+                  controlledBy: undefined,
+                  ...(flight.started ? { state: "gone" as const, path: [] } : {}),
+                }
+              : a,
+          ),
+        });
+      },
     }),
     {
       name: "airport-empire-save",
-      version: 2,
-      migrate: (persisted) => {
+      version: 4,
+      migrate: (persisted, version) => {
         const prev = persisted as Partial<GameState>;
         const airportName = prev.airportName ?? "Skyport International";
+        if (version < 2) {
+          return {
+            ...prev,
+            ...starterSlice(airportName),
+            cash: prev.cash && prev.cash > 0 ? prev.cash : STARTING_CASH,
+            flight: null,
+            flightOverlay: false,
+            flightHistory: [],
+            currentAirportId: HOME_AIRPORT_ID,
+            hubAircraft: [],
+            hubPassengers: [],
+          } as GameState;
+        }
         return {
           ...prev,
-          ...starterSlice(airportName),
-          cash: prev.cash && prev.cash > 0 ? prev.cash : STARTING_CASH,
+          flight: prev.flight ?? null,
+          flightOverlay: false,
+          flightHistory: prev.flightHistory ?? [],
+          currentAirportId: prev.currentAirportId ?? HOME_AIRPORT_ID,
+          hubAircraft: [],
+          hubPassengers: [],
+        } as GameState;
+      },
+      merge: (persisted, current) => {
+        const prev = (persisted ?? {}) as Partial<GameState>;
+        const savedAirport = prev.currentAirportId ?? HOME_AIRPORT_ID;
+        const currentAirportId = DESTINATION_BY_ID[savedAirport] ? savedAirport : HOME_AIRPORT_ID;
+        const traffic = isHomeAirport(currentAirportId) ? { aircraft: [], passengers: [] } : seedHubTraffic(currentAirportId);
+        const flightValid =
+          prev.flight && DESTINATION_BY_ID[prev.flight.destinationId] && DESTINATION_BY_ID[prev.flight.originId];
+        const aircraft = flightValid
+          ? prev.aircraft
+          : prev.aircraft?.map((a) => (a.controlledBy === "player" ? { ...a, controlledBy: undefined } : a));
+        return {
+          ...current,
+          ...prev,
+          ...(aircraft ? { aircraft } : {}),
+          flight: flightValid ? prev.flight! : null,
+          flightOverlay: false,
+          flightHistory: prev.flightHistory ?? [],
+          currentAirportId,
+          hubAircraft: traffic.aircraft,
+          hubPassengers: traffic.passengers,
         };
       },
       partialize: (s) => ({
@@ -285,6 +661,9 @@ export const useGame = create<GameState & GameActions>()(
         ledger: s.ledger,
         unlockedAirlines: s.unlockedAirlines,
         stats: s.stats,
+        flight: s.flight,
+        flightHistory: s.flightHistory,
+        currentAirportId: s.currentAirportId,
       }),
     },
   ),

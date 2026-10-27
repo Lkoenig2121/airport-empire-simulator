@@ -3,6 +3,8 @@
 import { countType, isOperational } from "@/lib/game/simulation";
 import { formatCash, formatClock } from "@/lib/game/iso";
 import { progressionLabel } from "@/lib/game/catalog";
+import { DESTINATION_BY_ID } from "@/lib/flight/destinations";
+import { isHomeAirport } from "@/lib/game/hubs";
 import { useGame } from "@/lib/game/store";
 
 function Stat({
@@ -28,6 +30,10 @@ function Stat({
 
 export function TopBar() {
   const name = useGame((s) => s.airportName);
+  const currentAirportId = useGame((s) => s.currentAirportId);
+  const here = DESTINATION_BY_ID[currentAirportId];
+  const visiting = !isHomeAirport(currentAirportId);
+  const shownName = here?.name ?? name;
   const cash = useGame((s) => s.cash);
   const minutes = useGame((s) => s.minutes);
   const stats = useGame((s) => s.stats);
@@ -49,8 +55,8 @@ export function TopBar() {
           <div className="text-[10px] font-semibold uppercase tracking-[0.28em] text-amber-300/80">
             Airport Empire
           </div>
-          <div className="font-semibold tracking-tight text-white">{name}</div>
-          <div className="text-[11px] text-white/50">{era}</div>
+          <div className="font-semibold tracking-tight text-white">{shownName}</div>
+          <div className="text-[11px] text-white/50">{visiting ? here?.tagline ?? "Read-only hub" : era}</div>
         </div>
         <div
           className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest ${

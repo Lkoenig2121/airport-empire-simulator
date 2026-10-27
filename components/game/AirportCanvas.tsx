@@ -14,6 +14,8 @@ import {
 } from "@/lib/game/render";
 import { canPlace, footprint } from "@/lib/game/simulation";
 import { paintCells, useGame } from "@/lib/game/store";
+import { isHomeAirport } from "@/lib/game/hubs";
+import { worldAircraft, worldBuildings, worldPassengers } from "@/lib/game/world";
 import { MAP_SIZE } from "@/lib/game/types";
 import { cellsOf } from "@/lib/game/iso";
 
@@ -52,8 +54,9 @@ export default function AirportCanvas() {
     };
 
     const rebuildStatic = () => {
-      const { buildings } = useGame.getState();
-      const sig = buildings.map((b) => b.id).join("|");
+      const state = useGame.getState();
+      const buildings = worldBuildings(state);
+      const sig = `${state.currentAirportId}|${buildings.map((b) => b.id).join("|")}`;
       if (sig === lastBuildingSig) return;
       lastBuildingSig = sig;
       builds.clear();
@@ -62,7 +65,10 @@ export default function AirportCanvas() {
     };
 
     const renderGhost = (gx: number, gy: number) => {
-      const { selectedTool, buildings, rotate, inspect, aircraft } = useGame.getState();
+      const state = useGame.getState();
+      const { selectedTool, rotate, inspect } = state;
+      const buildings = worldBuildings(state);
+      const aircraft = worldAircraft(state);
       ghost.clear();
       if (inspect?.kind === "building") {
         const building = buildings.find((b) => b.id === inspect.id);
@@ -86,11 +92,14 @@ export default function AirportCanvas() {
     };
 
     const renderActors = () => {
-      const { aircraft, passengers } = useGame.getState();
+      const state = useGame.getState();
+      const aircraft = worldAircraft(state);
+      const passengers = worldPassengers(state);
       actors.clear();
+      const visibleAircraft = aircraft.filter((a) => !(a.controlledBy === "player" && state.flightOverlay));
       const list = [
         ...passengers.map((p) => ({ z: p.x + p.y, draw: () => drawPassenger(actors, p) })),
-        ...aircraft.map((a) => ({ z: a.x + a.y + (a.alt ?? 0) * 3, draw: () => drawAircraft(actors, a) })),
+        ...visibleAircraft.map((a) => ({ z: a.x + a.y + (a.alt ?? 0) * 3, draw: () => drawAircraft(actors, a) })),
       ].sort((a, b) => a.z - b.z);
       for (const item of list) item.draw();
     };
@@ -111,7 +120,8 @@ export default function AirportCanvas() {
       }
       if (event.button !== 0) return;
       const cell = cellFromEvent(event.clientX, event.clientY);
-      const tool = useGame.getState().selectedTool;
+      const visiting = !isHomeAirport(useGame.getState().currentAirportId);
+      const tool = visiting ? null : useGame.getState().selectedTool;
       if (!tool) {
         useGame.getState().inspectAt(cell.x, cell.y);
         renderGhost(cell.x, cell.y);
@@ -182,6 +192,7 @@ export default function AirportCanvas() {
     const onContext = (event: Event) => event.preventDefault();
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (useGame.getState().flightOverlay) return;
       if (event.key === "ArrowLeft") keys.left = true;
       else if (event.key === "ArrowRight") keys.right = true;
       else if (event.key === "ArrowUp") keys.up = true;

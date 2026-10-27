@@ -1,4 +1,5 @@
-import { AIRLINE_BY_ID, BUILD_BY_ID, CITIES, STAFF_ROLES } from "./catalog";
+import { NETWORK_AIRPORTS } from "../flight/destinations";
+import { AIRLINE_BY_ID, BUILD_BY_ID, STAFF_ROLES } from "./catalog";
 import { cellKey, cellsOf, inBounds, uid } from "./iso";
 import { findPath } from "./pathfinding";
 import type {
@@ -110,9 +111,8 @@ function runwayLane(runway: Building) {
   return { alongX, points };
 }
 
-function pickCity(tier: Airline["tier"], airportName: string, kind: Flight["kind"]) {
-  const list = CITIES[tier];
-  const city = list[Math.floor(Math.random() * list.length)];
+function pickCity(_tier: Airline["tier"], airportName: string, kind: Flight["kind"]) {
+  const city = NETWORK_AIRPORTS[Math.floor(Math.random() * NETWORK_AIRPORTS.length)].name;
   return kind === "arrival"
     ? { origin: city, destination: airportName }
     : { origin: airportName, destination: city };
@@ -381,6 +381,32 @@ function moveAlong(
   return false;
 }
 
+export function returnPlayerAircraft(plane: Aircraft, buildings: Building[], destIsHome: boolean): Aircraft {
+  if (!destIsHome) {
+    return { ...plane, state: "gone", controlledBy: undefined, path: [], alt: 0, wait: 0 };
+  }
+  const runway = buildings.find((b) => b.type === "runway");
+  if (!runway) {
+    return { ...plane, state: "parked", controlledBy: undefined, alt: 0, path: [], wait: 8 };
+  }
+  const { alongX, points } = runwayLane(runway);
+  const start = points[0];
+  const approach = alongX
+    ? { x: start.x - 12, y: start.y }
+    : { x: start.x, y: start.y - 12 };
+  return {
+    ...plane,
+    x: approach.x,
+    y: approach.y,
+    heading: alongX ? 0 : Math.PI / 2,
+    alt: 11,
+    state: "approach",
+    path: [start, ...points.slice(1)],
+    wait: 0,
+    controlledBy: undefined,
+  };
+}
+
 export function advanceSimulation(state: GameState, dtSec: number): Partial<GameState> {
   if (state.speed === 0 || state.welcome) return {};
 
@@ -450,6 +476,7 @@ export function advanceSimulation(state: GameState, dtSec: number): Partial<Game
   }
 
   for (const plane of aircraft) {
+    if (plane.controlledBy === "player") continue;
     const flight = flights.find((f) => f.id === plane.flightId);
     if (!flight || !runway) continue;
     const { points } = runwayLane(runway);
@@ -484,7 +511,7 @@ export function advanceSimulation(state: GameState, dtSec: number): Partial<Game
     if (plane.state === "approach") {
       const dist = Math.hypot(plane.x - start.x, plane.y - start.y);
       plane.alt = Math.max(0, Math.min(12, dist * 0.7));
-    } else if (plane.state === "landing" || plane.state === "taxi-in" || plane.state === "taxi-out" || plane.state === "parked") {
+    } else if (plane.state === "landing" || plane.state === "taxi-in" || plane.state === "taxi-out") {
       plane.alt = 0;
     } else if (plane.state === "takeoff") {
       const airborne = plane.path.length <= 22;

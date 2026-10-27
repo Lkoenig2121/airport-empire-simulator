@@ -39,7 +39,9 @@ export function resolveInspect(
   buildings: Building[],
   aircraft: Aircraft[],
 ): Inspection | null {
-  const nearPlane = aircraft.find((a) => Math.hypot(a.x - x, a.y - y) < 1.15);
+  const nearPlane = aircraft.find(
+    (a) => a.controlledBy !== "player" && Math.hypot(a.x - x, a.y - y) < 1.15,
+  );
   if (nearPlane) return { kind: "aircraft", id: nearPlane.id };
   const hit = occupiedMap(buildings).get(`${x},${y}`);
   if (hit) return { kind: "building", id: hit.id };
@@ -102,7 +104,7 @@ export function inspectSummary(
     kicker: airline?.name ?? "Airline",
     description: `${flight?.origin ?? "—"} → ${flight?.destination ?? "—"}`,
     purpose:
-      "A live aircraft on the field. It will approach, land, taxi, board or deplane, then take off again.",
+      "A live aircraft on the field. Click Pilot Aircraft to take the cockpit, or leave it to the airline AI to approach, land, taxi, and depart.",
     size: plane.state.replace("-", " "),
     cost: flight?.kind === "arrival" ? "Inbound service" : "Outbound service",
     people: { current: booked, max: Math.max(booked, 72) },

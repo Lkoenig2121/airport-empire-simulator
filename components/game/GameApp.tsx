@@ -13,7 +13,9 @@ import {
 import { AdvisorPanel } from "./AdvisorPanel";
 import { InspectPanel } from "./InspectPanel";
 import { NewGameButton, Notices, WelcomeOverlay } from "./Overlays";
+import { AirportSwitcher } from "./AirportSwitcher";
 import { TopBar } from "./TopBar";
+import { FlightShell } from "@/components/flight/FlightShell";
 import { useGame } from "@/lib/game/store";
 
 const AirportCanvas = dynamic(() => import("./AirportCanvas"), {
@@ -33,6 +35,9 @@ export default function GameApp() {
   const speed = useGame((s) => s.speed);
   const setPanel = useGame((s) => s.setPanel);
   const clearInspect = useGame((s) => s.clearInspect);
+  const flightOverlay = useGame((s) => s.flightOverlay);
+  const flight = useGame((s) => s.flight);
+  const resumeCockpit = useGame((s) => s.resumeCockpit);
 
   useEffect(() => {
     const unsub = useGame.persist.onFinishHydration(() => setReady(true));
@@ -46,6 +51,7 @@ export default function GameApp() {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (useGame.getState().flightOverlay) return;
       if (event.key === "Escape") {
         setTool(null);
         clearInspect();
@@ -85,9 +91,20 @@ export default function GameApp() {
       <FinancePanel />
       <AnalyticsPanel />
       <Notices />
+      <AirportSwitcher />
       <BottomDock />
       <NewGameButton />
       <WelcomeOverlay />
+      {flight && !flightOverlay ? (
+        <button
+          type="button"
+          onClick={resumeCockpit}
+          className="absolute bottom-24 left-3 z-30 rounded-xl bg-amber-300 px-3 py-2 text-xs font-semibold text-black shadow-lg"
+        >
+          Return to cockpit · {flight.flightNo}
+        </button>
+      ) : null}
+      {flightOverlay ? <FlightShell /> : null}
     </div>
   );
 }

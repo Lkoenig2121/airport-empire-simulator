@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { BUILDINGS, categoryLabel } from "@/lib/game/catalog";
 import { formatFullCash } from "@/lib/game/iso";
+import { DESTINATION_BY_ID } from "@/lib/flight/destinations";
+import { isHomeAirport } from "@/lib/game/hubs";
 import { useGame } from "@/lib/game/store";
 import type { BuildCategory } from "@/lib/game/types";
 
@@ -116,7 +118,10 @@ export function BuildPanel() {
   const tool = useGame((s) => s.selectedTool);
   const setTool = useGame((s) => s.setTool);
   const cash = useGame((s) => s.cash);
+  const currentAirportId = useGame((s) => s.currentAirportId);
   const [collapsed, setCollapsed] = useState(true);
+  const visiting = !isHomeAirport(currentAirportId);
+  const hub = DESTINATION_BY_ID[currentAirportId];
 
   useEffect(() => {
     if (window.innerWidth >= 1280) setCollapsed(false);
@@ -138,7 +143,7 @@ export function BuildPanel() {
           <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-amber-300/80">
             Construction
           </div>
-          <div className="text-lg font-semibold text-white">Build catalog</div>
+          <div className="text-lg font-semibold text-white">{visiting ? "Visitor mode" : "Build catalog"}</div>
           {collapsed ? (
             <div className="mt-0.5 truncate text-[11px] text-white/50">{toolLabel}</div>
           ) : null}
@@ -151,7 +156,15 @@ export function BuildPanel() {
           {collapsed ? "Open" : "Hide"}
         </button>
       </div>
-      {!collapsed ? (
+      {!collapsed && visiting ? (
+        <div className="p-4 text-sm leading-relaxed text-white/70">
+          <p>
+            {hub?.name ?? "This hub"} is a finished rival airport. You can inspect it, pilot aircraft, and fly the network, but you cannot place, sell, or demolish anything here.
+          </p>
+          <p className="mt-2 text-white/45">{hub?.tagline}</p>
+        </div>
+      ) : null}
+      {!collapsed && !visiting ? (
         <CatalogScroll>
           {ORDER.map((category) => (
             <div key={category} className="mb-4">

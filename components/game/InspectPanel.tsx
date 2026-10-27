@@ -4,7 +4,9 @@ import { BUILD_BY_ID } from "@/lib/game/catalog";
 import { formatFullCash } from "@/lib/game/iso";
 import { inspectSummary } from "@/lib/game/inspect";
 import { placementCost } from "@/lib/game/simulation";
+import { isHomeAirport } from "@/lib/game/hubs";
 import { useGame } from "@/lib/game/store";
+import { worldAircraft, worldBuildings, worldPassengers } from "@/lib/game/world";
 
 function Meter({
   label,
@@ -47,12 +49,22 @@ function Meter({
 
 export function InspectPanel() {
   const inspect = useGame((s) => s.inspect);
-  const buildings = useGame((s) => s.buildings);
-  const passengers = useGame((s) => s.passengers);
-  const aircraft = useGame((s) => s.aircraft);
+  const currentAirportId = useGame((s) => s.currentAirportId);
+  const homeBuildings = useGame((s) => s.buildings);
+  const homePassengers = useGame((s) => s.passengers);
+  const allAircraft = useGame((s) => s.aircraft);
+  const hubAircraft = useGame((s) => s.hubAircraft);
+  const hubPassengers = useGame((s) => s.hubPassengers);
   const flights = useGame((s) => s.flights);
+  const visiting = !isHomeAirport(currentAirportId);
+  const buildings = worldBuildings({ currentAirportId, buildings: homeBuildings });
+  const passengers = worldPassengers({ currentAirportId, passengers: homePassengers, hubPassengers });
+  const aircraft = worldAircraft({ currentAirportId, aircraft: allAircraft, hubAircraft });
   const clear = useGame((s) => s.clearInspect);
   const sellBuilding = useGame((s) => s.sellBuilding);
+  const enterCockpit = useGame((s) => s.enterCockpit);
+  const resumeCockpit = useGame((s) => s.resumeCockpit);
+  const flight = useGame((s) => s.flight);
   if (!inspect) return null;
 
   const info = inspectSummary(inspect, buildings, passengers, aircraft, flights);
@@ -109,7 +121,19 @@ export function InspectPanel() {
           </div>
         </div>
         <div className="text-[12px] text-white/45">{info.extra}</div>
-        {selectedBuilding ? (
+        {inspect.kind === "aircraft" ? (
+          <button
+            type="button"
+            onClick={() => {
+              if (flight?.started && flight.phase !== "completed") resumeCockpit();
+              else enterCockpit(inspect.id);
+            }}
+            className="w-full rounded-xl bg-amber-300 px-3 py-2.5 text-sm font-semibold text-black hover:bg-amber-200"
+          >
+            {flight?.started && flight.phase !== "completed" ? "Return to Cockpit" : "Pilot Aircraft"}
+          </button>
+        ) : null}
+        {selectedBuilding && !visiting ? (
           <button
             type="button"
             onClick={() => sellBuilding(selectedBuilding.id)}
